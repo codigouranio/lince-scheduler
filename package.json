@@ -1,0 +1,16 @@
+{
+  "name": "lincescheduler",
+  "version": "1.0.0",
+  "description": "powerful task scheduling component for Node.js applications",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "codigouranio",
+  "license": "MIT",
+  "repository": "git@github.com:codigouranio/LinceScheduler.git",
+  "dependencies": {
+    "aws-sdk": "^2.1402.0",
+    "moment": "^2.29.4"
+  }
+}
