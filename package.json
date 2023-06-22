@@ -1,6 +1,6 @@
 {
   "name": "lincescheduler",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "powerful task scheduling component for Node.js applications",
   "main": "index.js",
   "scripts": {
@@ -9,6 +9,13 @@
   "author": "codigouranio",
   "license": "MIT",
   "repository": "git@github.com:codigouranio/LinceScheduler.git",
+  "keywords": [
+    "scheduler",
+    "task",
+    "handler",
+    "messaging processing",
+    "retry"
+  ],
   "dependencies": {
     "aws-sdk": "^2.1402.0",
     "moment": "^2.29.4"
