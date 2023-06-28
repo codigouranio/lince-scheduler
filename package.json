@@ -4,7 +4,8 @@
   "description": "powerful task scheduling component for Node.js applications",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest", 
+    "test:debug": "node --inspect-brk ./node_modules/jest/bin/jest.js --runInBand"
   },
   "author": "codigouranio",
   "license": "MIT",
@@ -18,6 +19,11 @@
   ],
   "dependencies": {
     "aws-sdk": "^2.1402.0",
-    "moment": "^2.29.4"
+    "moment": "^2.29.4",
+    "uuid": "^9.0.0",
+    "winston": "^3.9.0"
+  },
+  "devDependencies": {
+    "jest": "^29.5.0"
   }
 }
