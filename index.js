@@ -1,8 +1,8 @@
-const moment = require("moment");
-const { AsyncLocalStorage } = require("async_hooks");
-const winston = require("winston");
-const { format, createLogger, transport } = require("winston");
-const { v4: uuidv4 } = require("uuid");
+const moment = require('moment');
+const { AsyncLocalStorage } = require('async_hooks');
+const winston = require('winston');
+const { format, createLogger, transport } = require('winston');
+const { v4: uuidv4 } = require('uuid');
 
 const LinceScheduler = class LinceScheduler {
   constructor(options) {
@@ -13,7 +13,7 @@ const LinceScheduler = class LinceScheduler {
       maxRetries: 3,
       handler: new Handler(),
       parser: new Parser(),
-      logger: new Logger(),
+      logger: new ConsoleLogger(),
     };
 
     options = Object.assign({}, defaults, options);
@@ -26,17 +26,42 @@ const LinceScheduler = class LinceScheduler {
     this.maxIntervalMs = options.maxIntervalMs;
     this.maxRetries = options.maxRetries;
 
+    this.stats = {
+      totalPending: 0,
+      totalExecuted: 0,
+      totalErrors: 0,
+    };
+
     this.localStorage = new AsyncLocalStorage();
   }
 
-  async execute(message) {
-    const job = this.parser.parse(this, message);
+  /**
+   * Execute a job.
+   * @param {*} originalMessage
+   * @returns
+   */
+  async execute(originalMessage) {
+    const job = new Job({
+      maxRetries: this.maxRetries,
+      originalMessage,
+      message: this.parser.parse(this, originalMessage),
+    });
     job.setLocalStorage(this.localStorage);
-    await this.scheduleNow(job);
+    try {
+      await this.scheduleNow(job);
+    } catch (error) {
+      this.logger.error(job, error);
+    }
     return job;
   }
 
+  /**
+   * Schedule a job.
+   * @param {*} job
+   * @returns
+   */
   async scheduleNow(job) {
+    this.stats.totalPending++;
     return new Promise((resolve, reject) => {
       this.localStorage.run(job, () => this.schedule(job, resolve, reject));
     });
@@ -46,36 +71,44 @@ const LinceScheduler = class LinceScheduler {
     setTimeout(
       () => this.handleJob(job, resolve, reject),
       this.calculateInterval(job)
-    )
+    );
   }
 
   handleJob(job, resolve, reject) {
     try {
       job.increaseRetries();
-      console.log(`HANDLE JOB ${job.getRetries()}/${job.getMaxRetries()}`);
+      this.logger.info(job, `Handle job ${job.uuid}`);
       const result = this.handler.handle(job);
       job.setCompletedAsSuccess(result);
+      this.stats.totalExecuted++;
+      this.logger.info(job, 'Executed successfully');
       return resolve(job);
     } catch (error) {
-      this.logger.error(error);
-
-      if (error instanceof FatalError) {
+      if (
+        error instanceof FatalError ||
+        job.getRetries() >= job.getMaxRetries()
+      ) {
         job.setCompletedAsError(error);
-        // this.handleFatalError(job, error);
-        return job.retries == 1 ? reject(error) : resolve(job);
       }
 
-      if (job.getRetries() >= job.getMaxRetries()) {
-        job.setCompletedAsError(error);
+      if (job.status == 'error') {
+        this.stats.totalExecuted++;
+        this.stats.totalErrors++;
         // this.handleMaxRetriesExceeded.handle(job);
-        return job.retries == 1 ? reject(error) : resolve(job);
+        return reject(error);
       }
 
+      this.logger.error(job, error);
       job.setLastError(error);
       this.schedule(job, resolve, reject);
     }
   }
 
+  /**
+   * Calculate the interval for the next execution.
+   * @param {*} job
+   * @returns
+   */
   calculateInterval(job) {
     const interval = this.intervalMs * Math.pow(2, job.retries);
     return Math.min(interval, this.maxIntervalMs);
@@ -98,30 +131,27 @@ class Handler {
   constructor(options) {}
 
   handle(job) {
-    return { message: "not implemented" };
+    return { message: 'not implemented' };
   }
 }
 
 class HandlerMaxRetriesExceeded {
   handle(job) {
-    return { message: "not implemented" };
+    return { message: 'not implemented' };
   }
 }
 
 class HandlerFatalError {
   handle(job, error) {
-    return { message: "not implemented" };
+    return { message: 'not implemented' };
   }
 }
 
 class Parser {
   constructor(options) {}
 
-  parse(scheduler, message) {
-    return new Job({
-      originalMessage: message,
-      maxRetries: scheduler.getMaxRetries(),
-    });
+  parse(originalMessage) {
+    return { message: 'not implemented' };
   }
 }
 
@@ -135,21 +165,21 @@ class Job {
     this.maxRetries = options.maxRetries || 10;
     this.lastError = null;
     this.result = null;
-    this.status = "pending";
+    this.status = 'pending';
 
-    Object.defineProperty(this, "lastError", {
-      name: "lastError",
+    Object.defineProperty(this, 'lastError', {
+      name: 'lastError',
       enumerable: false,
       writable: true,
     });
 
-    Object.defineProperty(this, "originalMessage", {
-      name: "originalMessage",
+    Object.defineProperty(this, 'originalMessage', {
+      name: 'originalMessage',
       enumerable: false,
     });
 
-    Object.defineProperty(this, "localStore", {
-      name: "localStore",
+    Object.defineProperty(this, 'localStore', {
+      name: 'localStore',
       enumerable: false,
     });
 
@@ -190,44 +220,51 @@ class Job {
 
   setCompletedAsError(error) {
     this.completedAt = moment();
-    this.lastError = error;
-    this.status = "error";
+    this.status = 'error';
+    this.setLastError(error);
   }
 
   setCompletedAsSuccess(result) {
     this.completedAt = moment();
-    this.status = "success";
+    this.status = 'success';
   }
 
   getResult() {
     return this.result;
   }
 
+  wasSuccessful() {
+    return this.status == 'success';
+  }
+
+  wasError() {
+    return this.status == 'error';
+  }
+
   print() {
-    console.table([{
-      uuid: this.uuid, 
-      retries: this.retries,
-      status: this.status,
-    }]);
+    console.table([
+      {
+        uuid: this.uuid,
+        retries: this.retries,
+        status: this.status,
+      },
+    ]);
   }
 }
 
 class FatalError extends Error {
   constructor(message) {
     super(message);
-    this.name = "FatalError";
+    this.name = 'FatalError';
   }
 }
 
-const Logger = class Logger {
+const ConsoleLogger = class ConsoleLogger {
   constructor() {
     this.logger = createLogger({
-      format: format.combine(
-        format.timestamp(),
-        format.json(),
-        format.colorize()
-      ),
-      transports: [new winston.transports.Console()],
+      transports: [new winston.transports.Console({
+        format: format.combine(format.colorize(), format.simple(), format.timestamp(), format.ms())
+      })],
     });
   }
 
@@ -235,6 +272,7 @@ const Logger = class Logger {
     return {
       ...{
         uuid: job.uuid,
+        retry: `${job.getRetries()}/${job.getMaxRetries()}`,
       },
       ...{ message },
     };
@@ -245,8 +283,8 @@ const Logger = class Logger {
     this.logger.info(log);
   }
 
-  error(job, message) {
-    const log = this.createMessageLog(job, message);
+  error(job, error) {
+    const log = this.createMessageLog(job, error?.message);
     this.logger.error(log);
   }
 };
@@ -254,6 +292,6 @@ const Logger = class Logger {
 module.exports = {
   LinceScheduler,
   Job,
-  Logger,
+  ConsoleLogger,
   Handler,
 };
