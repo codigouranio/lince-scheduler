@@ -4,6 +4,10 @@ const winston = require('winston');
 const { format, createLogger, transport } = require('winston');
 const { v4: uuidv4 } = require('uuid');
 
+/**
+ * Scheduler to execute jobs.
+ * @param {*} options 
+ */
 const LinceScheduler = class LinceScheduler {
   constructor(options) {
     const defaults = {
