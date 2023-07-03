@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 
 /**
  * Scheduler to execute jobs.
- * @param {*} options 
+ * @param {*} options
  */
 const LinceScheduler = class LinceScheduler {
   constructor(options) {
@@ -266,9 +266,16 @@ class FatalError extends Error {
 const ConsoleLogger = class ConsoleLogger {
   constructor() {
     this.logger = createLogger({
-      transports: [new winston.transports.Console({
-        format: format.combine(format.colorize(), format.simple(), format.timestamp(), format.ms())
-      })],
+      transports: [
+        new winston.transports.Console({
+          format: format.combine(
+            format.colorize(),
+            format.simple(),
+            format.timestamp(),
+            format.ms()
+          ),
+        }),
+      ],
     });
   }
 
