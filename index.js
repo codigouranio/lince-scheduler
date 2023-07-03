@@ -47,12 +47,20 @@ const LinceScheduler = class LinceScheduler {
   async execute(originalMessage) {
     const job = new Job({
       maxRetries: this.maxRetries,
-      originalMessage,
-      message: this.parser.parse(this, originalMessage),
+      originalMessage
     });
+
+    try {
+      this.logger.info(job, 'Parsing message');
+      job.setMessage(this.parser.parse(this, originalMessage));
+    } catch (error) {
+      job.setCompletedAsError(new ParsingError(error.message));
+      this.logger.error(job, error);
+      return job;
+    }
     job.setLocalStorage(this.localStorage);
     try {
-      await this.scheduleNow(job);
+      await this.schedulePromise(job);
     } catch (error) {
       this.logger.error(job, error);
     }
@@ -64,7 +72,7 @@ const LinceScheduler = class LinceScheduler {
    * @param {*} job
    * @returns
    */
-  async scheduleNow(job) {
+  async schedulePromise(job) {
     this.stats.totalPending++;
     return new Promise((resolve, reject) => {
       this.localStorage.run(job, () => this.schedule(job, resolve, reject));
@@ -98,7 +106,6 @@ const LinceScheduler = class LinceScheduler {
       if (job.status == 'error') {
         this.stats.totalExecuted++;
         this.stats.totalErrors++;
-        // this.handleMaxRetriesExceeded.handle(job);
         return reject(error);
       }
 
@@ -182,6 +189,12 @@ class Job {
       enumerable: false,
     });
 
+    Object.defineProperty(this, 'message', {
+      name: 'message',
+      enumerable: false,
+      writable: true,
+    });
+
     Object.defineProperty(this, 'localStore', {
       name: 'localStore',
       enumerable: false,
@@ -192,6 +205,14 @@ class Job {
 
   getOriginalMessage() {
     return this.originalMessage;
+  }
+
+  getMessage() {
+    return this.message;
+  }
+
+  setMessage(message) {
+    this.message = message;
   }
 
   increaseRetries() {
@@ -220,6 +241,10 @@ class Job {
 
   getLastError() {
     return this.lastError;
+  }
+
+  getOriginalMessage() {
+    return this.originalMessage;
   }
 
   setCompletedAsError(error) {
@@ -256,10 +281,45 @@ class Job {
   }
 }
 
+class Queue {
+  constructor() {
+    this.items = [];
+  }
+
+  enqueue(item) {
+    this.items.push(item);
+  }
+
+  dequeue() {
+    if (this.isEmpty()) return null;
+    return this.items.shift();
+  }
+
+  front() {
+    if (this.isEmpty()) return null;
+    return this.items[0];
+  }
+
+  isEmpty() {
+    return this.items.length == 0;
+  }
+
+  size() {
+    return this.items.length;
+  }
+}
+
 class FatalError extends Error {
   constructor(message) {
     super(message);
     this.name = 'FatalError';
+  }
+}
+
+class ParsingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ParsingError';
   }
 }
 
@@ -290,13 +350,25 @@ const ConsoleLogger = class ConsoleLogger {
   }
 
   info(job, message) {
-    const log = this.createMessageLog(job, message);
-    this.logger.info(log);
+    if (this.isJobClass(job)) {
+      const log = this.createMessageLog(job, message);
+      this.logger.info(log);
+      return;
+    }
+    this.logger.info(message);
   }
 
   error(job, error) {
-    const log = this.createMessageLog(job, error?.message);
-    this.logger.error(log);
+    if (this.isJobClass(job)) {
+      const log = this.createMessageLog(job, error?.message);
+      this.logger.error(log);
+      return;
+    }
+    this.logger.error(error.message);
+  }
+
+  isJobClass(job) {
+    return (job instanceof Job);
   }
 };
 
@@ -305,4 +377,5 @@ module.exports = {
   Job,
   ConsoleLogger,
   Handler,
+  ParsingError
 };

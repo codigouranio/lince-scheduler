@@ -1,4 +1,4 @@
-const { LinceScheduler, Handler } = require('./index');
+const { LinceScheduler, ParsingError } = require('./index');
 
 describe('Test Execution', () => {
 
@@ -37,6 +37,29 @@ describe('Test Execution', () => {
   
     const job = await scheduler.execute('test');
     expect(job.wasError()).toBeTruthy();
+  });
+
+  test('test with parser error', async () => {
+    const handler = {
+      handle(job) {
+        console.log(job);
+      }
+    };
+    const parser = {
+      parse(message) {
+        throw new Error('test error parsing');
+      }
+    };
+    const scheduler = new LinceScheduler({
+      handler, 
+      parser
+    });
+    expect(scheduler).toBeInstanceOf(LinceScheduler);
+  
+    const job = await scheduler.execute('test');
+    expect(job.wasError()).toBeTruthy();
+    expect(job.getLastError()).toBeInstanceOf(ParsingError);
+    expect(job.getLastError().message).toBe('test error parsing');
   });
 
 });

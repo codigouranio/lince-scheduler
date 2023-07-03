@@ -1,4 +1,4 @@
-# LinceScheduler
+# Lince Scheduler
 
 The Lince Scheduler is a JavaScript module that provides a way to schedule
 execution of jobs. It allows you to define and schedule jobs execution with 

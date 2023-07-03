@@ -19,7 +19,6 @@
     "retry"
   ],
   "dependencies": {
-    "aws-sdk": "^2.1402.0",
     "moment": "^2.29.4",
     "uuid": "^9.0.0",
     "winston": "^3.9.0"
@@ -27,5 +26,8 @@
   "devDependencies": {
     "jest": "^29.5.0",
     "prettier": "2.8.8"
+  }, 
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }
