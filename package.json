@@ -1,6 +1,6 @@
 {
   "name": "lincescheduler",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "powerful task scheduling component for Node.js applications",
   "main": "index.js",
   "scripts": {
@@ -16,7 +16,15 @@
     "task",
     "handler",
     "messaging processing",
-    "retry"
+    "retry mechanism",
+    "task scheduler",
+    "task execution",
+    "cron scheduling",
+    "cron",
+    "message processor",
+    "parser",
+    "retry", 
+    "real-time stats"
   ],
   "dependencies": {
     "moment": "^2.29.4",
