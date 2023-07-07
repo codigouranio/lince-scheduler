@@ -5,17 +5,17 @@ const { format, createLogger, transport } = require('winston');
 const { v4: uuidv4 } = require('uuid');
 
 /**
- * Scheduler to execute jobs.
+ * Executor for retrying tasks.
  * @param {*} options
  */
-const LinceScheduler = class LinceScheduler {
+class TaskRetryExecutor {
   constructor(options) {
     const defaults = {
       startIntervalMs: 1000,
       intervalMs: 1000,
-      maxIntervalMs: 1000 * 60 * 60, 
+      maxIntervalMs: 1000 * 60 * 60,
       maxRetries: 3,
-      handler: new Handler(),
+      handler: new TaskHandler(),
       parser: new Parser(),
       logger: new ConsoleLogger(),
     };
@@ -41,130 +41,102 @@ const LinceScheduler = class LinceScheduler {
 
   /**
    * Schedule a message fetcher with a cron expression.
-   * @param {*} cronExpression 
-   * @param {*} messageFetcher 
-   * @returns 
+   * @param {*} cronExpression
+   * @param {*} messageFetcher
+   * @returns
    */
   schedule(options) {
-    const task = new ScheduleTask(options);
-    task.start(() => {
-      console.log(`test ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
-    });
+    const task = new ScheduleTask(this, options);
+    task.start();
     return task;
-    // return new Promise((resolve, reject) => {
-    //   const defaults = {
-    //     cronExpression: '* * * * *',
-    //     messageFetcher: new MessageFetcher(),
-    //     maxLoops: -1
-    //   }
-    //   options = Object.assign({}, defaults, options);
-    //   const cronTask = new CronTask(options.cronExpression);
-
-    // });
   }
 
-  // async scheduleCronTask(options, resolve, reject) {
-  //   setTimeout(async () => {
-  //     try {
-  //       const messages = await options.messageFetcher.fetchMessages();
-  //       if (Array.isArray(messages)) {
-  //         this.logger.info({}, `Found ${messages.length} messages`);
-  //         await Promise.allSettled(messages.map((message) => this.execute(message)));
-  //       }
-  //     } catch (error) {
-  //       this.logger.error({}, error);
-  //       return reject(error);
-  //     }
-  //     return resolve();
-  //   }, cronTask.calculateInterval());
-  // }
-
   /**
-   * Execute a job.
+   * Execute a task.
    * @param {*} originalMessage
    * @returns
    */
   async execute(originalMessage) {
-    const job = new Job({
+    const task = new Task({
       maxRetries: this.maxRetries,
       originalMessage,
     });
     try {
-      this.logger.info(job, 'Parsing message');
-      job.setMessage(this.parser.parse(this, originalMessage));
+      this.logger.info(task, 'Parsing message');
+      task.setMessage(this.parser.parse(this, originalMessage));
     } catch (error) {
-      job.setCompletedAsError(new ParsingError(error.message));
-      this.logger.error(job, error);
-      return job;
+      task.setCompletedAsError(new ParsingError(error.message));
+      this.logger.error(task, error);
+      return task;
     }
-    job.setLocalStorage(this.localStorage);
+    task.setLocalStorage(this.localStorage);
     try {
-      await this.retryPromise(job, this.calculateInterval(job));
+      await this.retryPromise(task, this.calculateInterval(task));
     } catch (error) {
-      this.logger.error(job, error);
+      this.logger.error(task, error);
     }
-    return job;
+    return task;
   }
 
   /**
-   * Schedule a job.
-   * @param {*} job
+   * Schedule a task.
+   * @param {*} task
    * @returns
    */
-  async retryPromise(job, interval) {
+  async retryPromise(task, interval) {
     this.stats.totalPending++;
     return new Promise((resolve, reject) => {
-      this.localStorage.run(job, () =>
-        this.retry(job, interval, resolve, reject)
+      this.localStorage.run(task, () =>
+        this.retry(task, interval, resolve, reject)
       );
     });
   }
 
-  retry(job, interval, resolve, reject) {
-    setTimeout(() => this.handleJob(job, resolve, reject), interval);
+  retry(task, interval, resolve, reject) {
+    setTimeout(() => this.handleTask(task, resolve, reject), interval);
   }
 
-  handleJob(job, resolve, reject) {
+  handleTask(task, resolve, reject) {
     try {
-      job.increaseRetries();
-      this.logger.info(job, `Handle job ${job.uuid}`);
-      const result = this.handler.handle(job);
-      job.setCompletedAsSuccess(result);
+      task.increaseRetries();
+      this.logger.info(task, `Handle task ${task.uuid}`);
+      const result = this.handler.handle(task);
+      task.setCompletedAsSuccess(result);
       this.stats.totalExecuted++;
-      this.logger.info(job, 'Executed successfully');
-      return resolve(job);
+      this.logger.info(task, 'Executed successfully');
+      return resolve(task);
     } catch (error) {
       if (
         error instanceof FatalError ||
-        job.getRetries() >= job.getMaxRetries()
+        task.getRetries() >= task.getMaxRetries()
       ) {
-        job.setCompletedAsError(error);
+        task.setCompletedAsError(error);
       }
 
-      if (job.status == 'error') {
+      if (task.status == 'error') {
         this.stats.totalExecuted++;
         this.stats.totalErrors++;
         return reject(error);
       }
 
-      this.logger.error(job, error);
-      job.setLastError(error);
-      this.retry(job, this.calculateInterval(job), resolve, reject);
+      this.logger.error(task, error);
+      task.setLastError(error);
+      this.retry(task, this.calculateInterval(task), resolve, reject);
     }
   }
 
   /**
    * Calculate the interval for the next execution.
-   * @param {*} job
+   * @param {*} task
    * @returns
    */
-  calculateInterval(job) {
-    const interval = this.intervalMs * Math.pow(2, job.retries);
+  calculateInterval(task) {
+    const interval = this.intervalMs * Math.pow(2, task.retries);
     return Math.min(interval, this.maxIntervalMs);
   }
 
-  handleFatalError(job, error) {
-    this.handler.handleFatalError(job, error);
+  handleFatalError(task, error) {
+    this.handler.handleFatalError(task, error);
   }
 
   getLocalStorage() {
@@ -176,16 +148,19 @@ const LinceScheduler = class LinceScheduler {
   }
 };
 
-class ScheduleTask {
+class TaskScheduler {
   constructor(options) {
     const defaults = {
       promise: new Promise((resolve, reject) => {
         this.resolve = resolve;
         this.reject = reject;
       }),
-      maxLoops: 3,
-      stopped: false, 
+      maxLoops: -1,
+      stopped: false,
       cronTask: new CronTask(options.cronExpression),
+      messageFetcher: new MessageFetcher(),
+      executor: new TaskRetryExecutor(),
+      logger: new ConsoleLogger(),
     };
 
     options = Object.assign({}, defaults, options);
@@ -193,22 +168,41 @@ class ScheduleTask {
     this.promise = options.promise;
     this.maxLoops = options.maxLoops;
     this.cronTask = options.cronTask;
+    this.messageFetcher = options.messageFetcher;
+    this.executor = options.executor;
+    this.logger = options.logger;
     this.started = false;
     this.stopped = false;
   }
 
   /**
    * Start the task.
-   * @param {*} funcTask 
+   * @param {*} funcTask
    */
-  start(funcTask) {
-    this.timeoutId = setTimeout(() => {
-      funcTask();
+  start() {
+    this.timeoutId = setTimeout(async () => {
+      try {
+        this.logger.info({}, `executing task at ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
+        const messages = await this.messageFetcher.fetchMessages();
+        if (Array.isArray(messages)) {
+          this.logger.info({}, `Found ${messages.length} messages`);
+          const tasks = await Promise.allSettled(
+            messages.map((message) => this.executor.execute(message))
+          );
+          const totalErrors = tasks.reduce((acc, task) => task.status === 'rejected' ? acc + 1 : acc, 0);
+          this.logger.info({}, `Executed ${tasks.length} tasks and ${totalErrors} failed`);
+        }
+      } catch (error) {
+        this.logger.error({}, error);
+      }
+
       if (this.maxLoops > 0) {
         this.maxLoops--;
-        this.start(funcTask);
       }
-      if (this.maxLoops == 0) {
+
+      if (this.maxLoops > 0 || this.maxLoops == -1) {
+        this.start();
+      } else {
         this.stop();
       }
     }, this.cronTask.calculateInterval());
@@ -217,10 +211,6 @@ class ScheduleTask {
   stop() {
     clearTimeout(this.timeoutId);
     this.resolve();
-  }
-
-  setInterval(interval) {
-    this.interval = interval;
   }
 
   setResolve(resolve) {
@@ -243,23 +233,15 @@ class ScheduleTask {
     return this.maxLoops;
   }
 
-  setIntervalId(intervalId) {
-    this.intervalId = intervalId;
-  }
-
-  getIntervalId() {
-    return this.intervalId;
-  }
-
   getPromise() {
     return this.promise;
   }
 }
 
-class Handler {
+class TaskHandler {
   constructor(options) {}
 
-  handle(job) {
+  handle(task) {
     return { message: 'not implemented' };
   }
 }
@@ -343,13 +325,13 @@ class CronTask {
 }
 
 class HandlerMaxRetriesExceeded {
-  handle(job) {
+  handle(task) {
     return { message: 'not implemented' };
   }
 }
 
 class HandlerFatalError {
-  handle(job, error) {
+  handle(task, error) {
     return { message: 'not implemented' };
   }
 }
@@ -362,7 +344,7 @@ class Parser {
   }
 }
 
-class Job {
+class Task {
   constructor(options) {
     this.uuid = uuidv4();
     this.startedAt = moment();
@@ -535,45 +517,46 @@ const ConsoleLogger = class ConsoleLogger {
     });
   }
 
-  createMessageLog(job, message) {
+  createMessageLog(task, message) {
     return {
       ...{
-        uuid: job.uuid,
-        retry: `${job.getRetries()}/${job.getMaxRetries()}`,
+        uuid: task.uuid,
+        retry: `${task.getRetries()}/${task.getMaxRetries()}`,
       },
       ...{ message },
     };
   }
 
-  info(job, message) {
-    if (this.isJobClass(job)) {
-      const log = this.createMessageLog(job, message);
+  info(task, message) {
+    if (this.isTaskClass(task)) {
+      const log = this.createMessageLog(task, message);
       this.logger.info(log);
       return;
     }
     this.logger.info(message);
   }
 
-  error(job, error) {
-    if (this.isJobClass(job)) {
-      const log = this.createMessageLog(job, error?.message);
+  error(task, error) {
+    if (this.isTaskClass(task)) {
+      const log = this.createMessageLog(task, error?.message);
       this.logger.error(log);
       return;
     }
     this.logger.error(error.message);
   }
 
-  isJobClass(job) {
-    return job instanceof Job;
+  isTaskClass(task) {
+    return task instanceof Task;
   }
 };
 
 module.exports = {
-  LinceScheduler,
-  Job,
+  TaskRetryExecutor,
+  TaskScheduler,
+  TaskHandler,
+  Task,
+  MessageFetcher,  
   ConsoleLogger,
-  Handler,
   ParsingError,
-  CronTask,
-  MessageFetcher,
+  CronTask
 };
