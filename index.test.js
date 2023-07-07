@@ -7,16 +7,15 @@ describe('Test Execution', () => {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
   
-  jest.setTimeout(65000);
+  jest.setTimeout(85000);
 
-  test.only('test success execution', async () => {
-    const handler = {
-      handle(task) {
-        return 'test';
-      }
-    };
+  test('test success execution', async () => {
     const executor = new TaskRetryExecutor({
-      handler
+      handler: {
+        handle(task) {
+          return 'test';
+        }
+      }
     });
     expect(executor).toBeInstanceOf(TaskRetryExecutor);
   
@@ -24,14 +23,13 @@ describe('Test Execution', () => {
     expect(task.wasSuccessful()).toBeTruthy();
   });
 
-  test.only('test error execution', async () => {
-    const handler = {
-      handle(task) {
-        throw new Error('test');
-      }
-    };
+  test('test error execution', async () => {
     const executor = new TaskRetryExecutor({
-      handler
+      handler: {
+        handle(task) {
+          throw new Error('test');
+        }
+      }
     });
     expect(executor).toBeInstanceOf(TaskRetryExecutor);
   
@@ -39,20 +37,18 @@ describe('Test Execution', () => {
     expect(task.wasError()).toBeTruthy();
   });
 
-  test.only('test with parser error', async () => {
-    const handler = {
-      handle(task) {
-        console.log(task);
-      }
-    };
-    const parser = {
-      parse(message) {
-        throw new Error('test error parsing');
-      }
-    };
+  test('test with parser error', async () => {
     const executor = new TaskRetryExecutor({
-      handler, 
-      parser
+      handler: {
+        handle(task) {
+          console.log(task);
+        }
+      }, 
+      parser: {
+        parse(message) {
+          throw new Error('test error parsing');
+        }
+      }
     });
     expect(executor).toBeInstanceOf(TaskRetryExecutor);
   
@@ -62,7 +58,7 @@ describe('Test Execution', () => {
     expect(task.getLastError().message).toBe('test error parsing');
   });
 
-  test.only('test cron task forward', async () => {
+  test('test cron task forward', async () => {
     const cronTaskMinute = new CronTask(`${moment().add(1, 'minute').minute()} * * * * *`);
     expect(cronTaskMinute.calculateInterval()).toBeGreaterThanOrEqual(60000);
 
@@ -80,7 +76,7 @@ describe('Test Execution', () => {
     expect(cronTaskDayOfWeek.calculateInterval()).toBeGreaterThanOrEqual(86400000);
   });
 
-  test.only('test cron task backward', async () => {
+  test('test cron task backward', async () => {
     const cronTaskMinute = new CronTask(`${moment().subtract(1, 'minute').minute()} * * * *`);
     expect(cronTaskMinute.calculateInterval()).toBe(3540000);
 
@@ -98,13 +94,13 @@ describe('Test Execution', () => {
     expect(cronTaskDayOfWeek.calculateInterval()).toBeGreaterThanOrEqual(86400000);
   });
 
-  test.only('test cron task backward', async () => {
+  test('test cron task backward', async () => {
     const cronTaskTens = new CronTask(`*/10 * * * *`);
 
     expect(cronTaskTens.calculateInterval()).toBe(10000);
   });
 
-  test.only('test schedule fetcher', async () => {
+  test('test schedule fetcher', async () => {
     const executor = new TaskRetryExecutor({
       handler: {
         handle(task) {
@@ -122,21 +118,26 @@ describe('Test Execution', () => {
   });
 
   test('test schedule fetcher error', async () => {
-    const taskExecutor = new TaskRetryExecutor({
+    const executor = new TaskRetryExecutor({
       handler: {
-        handle(task) {
-          throw new Error('test');
+        async handle(task, context) {
+          console.log(`test ${moment().format('HH:mm:ss')}}`);
+          throw new Error('dummy test');
         }
       }
     });
     const scheduler = new TaskScheduler({
       cronExpression: '*/10 * * * *', 
-      taskExecutor
+      executor, 
+      maxLoops: 3
     });
     expect(scheduler).toBeInstanceOf(TaskScheduler);
 
     scheduler.start();
     await scheduler.getPromise();
+    expect(scheduler.getStats().totalExecuted).toBe(6);
+    expect(scheduler.getStats().totalErrors).toBe(6);
+    expect(scheduler.getStats().totalPending).toBe(0);
   });
 
 

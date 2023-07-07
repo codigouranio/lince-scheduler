@@ -15,9 +15,10 @@ class TaskRetryExecutor {
       intervalMs: 1000,
       maxIntervalMs: 1000 * 60 * 60,
       maxRetries: 3,
-      handler: new TaskHandler(),
-      parser: new Parser(),
-      logger: new ConsoleLogger(),
+      handler: new DummyTaskHandler(),
+      parser: new DummyMessageParser(),
+      logger: new DefaultConsoleLogger(),
+      context: {},
     };
 
     options = Object.assign({}, defaults, options);
@@ -37,6 +38,22 @@ class TaskRetryExecutor {
     };
 
     this.localStorage = new AsyncLocalStorage();
+    this.context = Object.assign(
+      {},
+      this.createDefaultContext(options),
+      this.context
+    );
+    Object.defineProperty(this, 'context', {
+      name: 'context',
+      enumerable: false,
+      writable: false,
+    });
+  }
+
+  createDefaultContext(options) {
+    return {
+      logger: this.logger,
+    };
   }
 
   /**
@@ -63,7 +80,7 @@ class TaskRetryExecutor {
     });
     try {
       this.logger.info(task, 'Parsing message');
-      task.setMessage(this.parser.parse(this, originalMessage));
+      task.setMessage(this.parser.parse(originalMessage, this.context));
     } catch (error) {
       task.setCompletedAsError(new ParsingError(error.message));
       this.logger.error(task, error);
@@ -93,14 +110,17 @@ class TaskRetryExecutor {
   }
 
   retry(task, interval, resolve, reject) {
-    setTimeout(() => this.handleTask(task, resolve, reject), interval);
+    setTimeout(
+      async () => await this.handleTask(task, resolve, reject),
+      interval
+    );
   }
 
-  handleTask(task, resolve, reject) {
+  async handleTask(task, resolve, reject) {
     try {
       task.increaseRetries();
       this.logger.info(task, `Handle task ${task.uuid}`);
-      const result = this.handler.handle(task);
+      const result = await this.handler.handle(task, this.context);
       task.setCompletedAsSuccess(result);
       this.stats.totalExecuted++;
       this.logger.info(task, 'Executed successfully');
@@ -146,7 +166,7 @@ class TaskRetryExecutor {
   getMaxRetries() {
     return this.maxRetries;
   }
-};
+}
 
 class TaskScheduler {
   constructor(options) {
@@ -158,9 +178,11 @@ class TaskScheduler {
       maxLoops: -1,
       stopped: false,
       cronTask: new CronTask(options.cronExpression),
-      messageFetcher: new MessageFetcher(),
+      messageFetcher: new DummyMessageFetcher(),
       executor: new TaskRetryExecutor(),
-      logger: new ConsoleLogger(),
+      logger: new DefaultConsoleLogger(),
+      statsHandler: new DummyStatsHandler(),
+      context: {},
     };
 
     options = Object.assign({}, defaults, options);
@@ -171,8 +193,52 @@ class TaskScheduler {
     this.messageFetcher = options.messageFetcher;
     this.executor = options.executor;
     this.logger = options.logger;
+    this.statsHandler = options.statsHandler;
     this.started = false;
     this.stopped = false;
+    this.context = Object.assign(
+      {},
+      this.createDefaultContext(options),
+      this.context
+    );
+
+    Object.defineProperty(this, 'context', {
+      name: 'context',
+      enumerable: false,
+      writable: false,
+    });
+
+    this.stats = this.createStats();
+  }
+
+  createDefaultContext(options) {
+    return {
+      logger: this.logger,
+    };
+  }
+
+  createStats() {
+    return {
+      totalPending: 0,
+      totalExecuted: 0,
+      totalErrors: 0,
+    };
+  }
+
+  increasePendingCount(value) {
+    this.stats.totalPending += value;
+  }
+
+  increaseExecutedCount(value) {
+    this.stats.totalExecuted += value;
+  }
+
+  increaseErrorCount(error) {
+    this.stats.totalErrors += error;
+  }
+
+  decreasePendingCount(value) {
+    this.stats.totalPending -= value;
   }
 
   /**
@@ -182,15 +248,31 @@ class TaskScheduler {
   start() {
     this.timeoutId = setTimeout(async () => {
       try {
-        this.logger.info({}, `executing task at ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
-        const messages = await this.messageFetcher.fetchMessages();
+        this.logger.info(
+          {},
+          `executing task at ${moment().format('YYYY-MM-DD HH:mm:ss')}`
+        );
+        const messages = await this.messageFetcher.fetchMessages(this.context);
         if (Array.isArray(messages)) {
           this.logger.info({}, `Found ${messages.length} messages`);
+          this.increasePendingCount(messages.length);
           const tasks = await Promise.allSettled(
-            messages.map((message) => this.executor.execute(message))
+            messages.map((message) =>
+              this.executor.execute(message, this.context)
+            )
           );
-          const totalErrors = tasks.reduce((acc, task) => task.status === 'rejected' ? acc + 1 : acc, 0);
-          this.logger.info({}, `Executed ${tasks.length} tasks and ${totalErrors} failed`);
+          this.increaseExecutedCount(tasks.length);
+          this.decreasePendingCount(tasks.length);
+          const totalErrors = tasks.reduce(
+            (acc, task) => (task.value.wasError() ? acc + 1 : acc),
+            0
+          );
+          this.increaseErrorCount(totalErrors);
+          this.statsHandler.handle(this.stats, this.context);
+          this.logger.info(
+            {},
+            `Executed ${tasks.length} tasks and ${totalErrors} failed`
+          );
         }
       } catch (error) {
         this.logger.error({}, error);
@@ -217,6 +299,10 @@ class TaskScheduler {
     this.resolve = resolve;
   }
 
+  getStats() {
+    return this.stats;
+  }
+
   getResolve() {
     return this.resolve;
   }
@@ -238,20 +324,36 @@ class TaskScheduler {
   }
 }
 
-class TaskHandler {
+class DummyTaskHandler {
   constructor(options) {}
 
-  handle(task) {
+  handle(task, context) {
     return { message: 'not implemented' };
   }
 }
 
-class MessageFetcher {
+class DummyMessageFetcher {
   constructor(options) {}
 
-  async fetchMessages(options) {
+  async fetchMessages(options, context) {
     console.log('fetchMessages');
     return [{}, {}];
+  }
+}
+
+class DummyMessageParser {
+  constructor(options) {}
+
+  parse(originalMessage, context) {
+    return { message: 'not implemented' };
+  }
+}
+
+class DummyStatsHandler {
+  constructor(options) {}
+
+  handle(task, context) {
+    return { message: 'not implemented' };
   }
 }
 
@@ -321,26 +423,6 @@ class CronTask {
       return matches[0];
     }
     return 0;
-  }
-}
-
-class HandlerMaxRetriesExceeded {
-  handle(task) {
-    return { message: 'not implemented' };
-  }
-}
-
-class HandlerFatalError {
-  handle(task, error) {
-    return { message: 'not implemented' };
-  }
-}
-
-class Parser {
-  constructor(options) {}
-
-  parse(originalMessage) {
-    return { message: 'not implemented' };
   }
 }
 
@@ -459,49 +541,7 @@ class Task {
   }
 }
 
-class Queue {
-  constructor() {
-    this.items = [];
-  }
-
-  enqueue(item) {
-    this.items.push(item);
-  }
-
-  dequeue() {
-    if (this.isEmpty()) return null;
-    return this.items.shift();
-  }
-
-  front() {
-    if (this.isEmpty()) return null;
-    return this.items[0];
-  }
-
-  isEmpty() {
-    return this.items.length == 0;
-  }
-
-  size() {
-    return this.items.length;
-  }
-}
-
-class FatalError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'FatalError';
-  }
-}
-
-class ParsingError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'ParsingError';
-  }
-}
-
-const ConsoleLogger = class ConsoleLogger {
+const DefaultConsoleLogger = class ConsoleLogger {
   constructor() {
     this.logger = createLogger({
       transports: [
@@ -550,13 +590,30 @@ const ConsoleLogger = class ConsoleLogger {
   }
 };
 
+class FatalError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'FatalError';
+  }
+}
+
+class ParsingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ParsingError';
+  }
+}
+
 module.exports = {
   TaskRetryExecutor,
   TaskScheduler,
-  TaskHandler,
   Task,
-  MessageFetcher,  
-  ConsoleLogger,
+  DummyTaskHandler,
+  DummyMessageParser,
+  DummyMessageFetcher,
+  DefaultConsoleLogger,
+  DummyStatsHandler,
+  CronTask,
   ParsingError,
-  CronTask
+  FatalError,
 };
