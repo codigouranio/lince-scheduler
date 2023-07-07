@@ -48,7 +48,7 @@ const executor = new TaskRetryExecutor({
 
 // Create an instance of TaskScheduler
 const scheduler = new TaskScheduler({
-  cronExpression: '0 * * * *', // Cron expression for scheduling tasks (e.g., every hour)
+  cronExpression: '*/10 * * * *', // Cron expression for scheduling tasks (e.g., every 10 seconds)
   executor: executor, // TaskRetryExecutor instance for executing scheduled tasks
   logger: new DefaultConsoleLogger(), // Logger implementation
 });
