@@ -96,10 +96,6 @@ The Task class represents a task to be executed by the TaskRetryExecutor. It tra
 
 You can create your own custom task handler by implementing the logic for processing the messages. The task handler is responsible for handling individual tasks and returning the processing result.
 
-### Task
-
-The Task class represents a task to be executed by the TaskRetryExecutor. It tracks the task's state, retries, and completion status.
-
 ### Custom Message Parser
 
 The module allows you to implement a custom message parser to parse the incoming messages according to your specific data format or protocol. The message parser extracts the relevant data from the message for further processing.
