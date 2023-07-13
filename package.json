@@ -1,6 +1,6 @@
 {
   "name": "lincescheduler",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "powerful task scheduling component for Node.js applications",
   "main": "index.js",
   "scripts": {
